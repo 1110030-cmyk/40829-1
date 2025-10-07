@@ -1,0 +1,276 @@
+DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>記憶配對遊戲</title>
+    <!-- 載入 Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* 定義卡片翻轉效果 */
+        .card-inner {
+            transform-style: preserve-3d;
+            transition: transform 0.6s;
+        }
+        .is-flipped .card-inner {
+            transform: rotateY(180deg);
+        }
+        .card-face, .card-back {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            backface-visibility: hidden;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            border-radius: 0.75rem; /* rounded-xl */
+        }
+        .card-face {
+            transform: rotateY(180deg);
+            background-color: #f3f4f6; /* bg-gray-100 */
+        }
+    </style>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Inter', '微軟正黑體', 'sans-serif'],
+                    },
+                }
+            }
+        }
+    </script>
+</head>
+<body class="bg-gray-50 flex flex-col items-center justify-center min-h-screen p-4 font-sans">
+
+    <div class="w-full max-w-lg mx-auto bg-white shadow-2xl rounded-2xl p-6 md:p-8">
+        <h1 class="text-3xl font-bold text-center text-indigo-700 mb-6">對對碰記憶挑戰</h1>
+        
+        <!-- 資訊面板 -->
+        <div class="flex justify-between items-center mb-6 p-3 bg-indigo-50 rounded-lg shadow-inner">
+            <div id="time" class="text-lg font-medium text-gray-800">時間: 0s</div>
+            <div id="moves" class="text-lg font-medium text-gray-800">步數: 0</div>
+        </div>
+
+        <!-- 遊戲板 -->
+        <div id="game-board" class="grid grid-cols-4 gap-3 md:gap-4 aspect-square">
+            <!-- 卡片將由 JavaScript 產生 -->
+        </div>
+
+        <!-- 按鈕與遊戲狀態訊息 -->
+        <div class="mt-8 text-center">
+            <button id="reset-button" class="w-full py-3 px-6 bg-indigo-600 text-white font-semibold rounded-xl shadow-lg hover:bg-indigo-700 transition duration-300 transform hover:scale-[1.02] active:scale-95">
+                重新開始
+            </button>
+            <div id="game-message" class="mt-4 text-xl font-bold text-green-600 hidden">恭喜你完成挑戰！</div>
+        </div>
+    </div>
+
+    <script>
+        // 使用的表情符號，需要是成對的
+        const cardFaces = [
+            '🚀', '💡', '🌟', '🍩', 
+            '🍔', '🍕', '💻', '💎',
+            '🚀', '💡', '🌟', '🍩', 
+            '🍔', '🍕', '💻', '💎'
+        ];
+
+        let board = document.getElementById('game-board');
+        let timeElement = document.getElementById('time');
+        let movesElement = document.getElementById('moves');
+        let messageElement = document.getElementById('game-message');
+        let resetButton = document.getElementById('reset-button');
+
+        let cards = [];
+        let flippedCards = [];
+        let matchedPairs = 0;
+        let moves = 0;
+        let timer = null;
+        let timeElapsed = 0;
+        let isProcessing = false; // 用於防止在卡片比對動畫期間點擊
+
+        // --- 核心遊戲邏輯 ---
+
+        /**
+         * Fisher-Yates 洗牌算法
+         * @param {Array} array 要洗牌的陣列
+         * @returns {Array} 洗牌後的陣列
+         */
+        function shuffle(array) {
+            for (let i = array.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [array[i], array[j]] = [array[j], array[i]];
+            }
+            return array;
+        }
+
+        /**
+         * 初始化遊戲板
+         */
+        function createBoard() {
+            // 清空舊的卡片
+            board.innerHTML = '';
+            
+            // 複製並洗牌卡片內容
+            const shuffledFaces = shuffle([...cardFaces]);
+            
+            // 重置遊戲狀態
+            cards = [];
+            flippedCards = [];
+            matchedPairs = 0;
+            moves = 0;
+            timeElapsed = 0;
+            isProcessing = false;
+            
+            // 更新 UI
+            movesElement.textContent = `步數: 0`;
+            messageElement.classList.add('hidden');
+            
+            // 創建卡片元素
+            shuffledFaces.forEach((face, index) => {
+                // 卡片容器
+                const card = document.createElement('div');
+                card.classList.add('card', 'h-full', 'perspective', 'cursor-pointer');
+                card.dataset.index = index;
+                
+                // 內層翻轉容器
+                const cardInner = document.createElement('div');
+                cardInner.classList.add('card-inner', 'w-full', 'h-full', 'relative');
+                
+                // 卡片背面
+                const cardBack = document.createElement('div');
+                cardBack.classList.add('card-back', 'bg-indigo-400', 'shadow-md', 'text-2xl', 'text-white', 'font-bold', 'hover:bg-indigo-500', 'transition', 'duration-150');
+                cardBack.textContent = '?'; 
+                
+                // 卡片正面
+                const cardFace = document.createElement('div');
+                cardFace.classList.add('card-face', 'shadow-inner', 'text-4xl', 'md:text-5xl');
+                cardFace.textContent = face;
+                cardFace.dataset.value = face;
+
+                cardInner.appendChild(cardBack);
+                cardInner.appendChild(cardFace);
+                card.appendChild(cardInner);
+                
+                card.addEventListener('click', () => flipCard(card));
+                
+                board.appendChild(card);
+                cards.push({ element: card, value: face, isMatched: false, isFlipped: false });
+            });
+            
+            // 啟動計時器
+            startTimer();
+        }
+        
+        /**
+         * 啟動/重設計時器
+         */
+        function startTimer() {
+            if (timer) clearInterval(timer);
+            timeElapsed = 0;
+            timeElement.textContent = `時間: 0s`;
+            
+            timer = setInterval(() => {
+                timeElapsed++;
+                timeElement.textContent = `時間: ${timeElapsed}s`;
+            }, 1000);
+        }
+        
+        /**
+         * 處理卡片點擊翻轉邏輯
+         * @param {HTMLElement} cardElement 被點擊的卡片 DOM 元素
+         */
+        function flipCard(cardElement) {
+            const cardIndex = parseInt(cardElement.dataset.index);
+            const card = cards[cardIndex];
+
+            // 檢查是否正在處理、已配對或已經翻面
+            if (isProcessing || card.isMatched || card.isFlipped || flippedCards.length >= 2) {
+                return;
+            }
+
+            // 翻轉卡片
+            cardElement.classList.add('is-flipped');
+            card.isFlipped = true;
+            flippedCards.push(card);
+
+            if (flippedCards.length === 2) {
+                // 增加步數
+                moves++;
+                movesElement.textContent = `步數: ${moves}`;
+                isProcessing = true; // 阻止進一步的點擊
+                
+                // 檢查是否配對成功
+                checkForMatch();
+            }
+        }
+
+        /**
+         * 檢查兩張翻開的卡片是否配對成功
+         */
+        function checkForMatch() {
+            const [card1, card2] = flippedCards;
+            const element1 = card1.element;
+            const element2 = card2.element;
+
+            if (card1.value === card2.value) {
+                // --- 配對成功 ---
+                
+                matchedPairs++;
+                card1.isMatched = true;
+                card2.isMatched = true;
+                
+                // 讓配對成功的卡片保持翻面，並添加視覺效果
+                setTimeout(() => {
+                    element1.classList.add('matched', 'pointer-events-none', 'shadow-none', 'opacity-50', 'transition', 'duration-500');
+                    element2.classList.add('matched', 'pointer-events-none', 'shadow-none', 'opacity-50', 'transition', 'duration-500');
+                    
+                    // 清空暫存的翻轉卡片
+                    flippedCards = [];
+                    isProcessing = false;
+
+                    // 檢查遊戲是否結束
+                    if (matchedPairs === cardFaces.length / 2) {
+                        gameOver();
+                    }
+                }, 500);
+
+            } else {
+                // --- 配對失敗 ---
+                
+                setTimeout(() => {
+                    // 翻回背面
+                    element1.classList.remove('is-flipped');
+                    element2.classList.remove('is-flipped');
+                    card1.isFlipped = false;
+                    card2.isFlipped = false;
+                    
+                    // 清空暫存的翻轉卡片
+                    flippedCards = [];
+                    isProcessing = false;
+                }, 1000); // 延遲 1 秒後翻回
+            }
+        }
+
+        /**
+         * 遊戲結束處理
+         */
+        function gameOver() {
+            clearInterval(timer);
+            messageElement.textContent = `恭喜！你以 ${timeElapsed} 秒和 ${moves} 步完成挑戰！`;
+            messageElement.classList.remove('hidden');
+        }
+
+        // --- 事件監聽與初始化 ---
+
+        resetButton.addEventListener('click', createBoard);
+
+        // 首次載入時初始化遊戲
+        createBoard();
+
+    </script>
+</body>
+</html>
+
+            
